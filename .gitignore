@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# UV
+uv.lock
+
+# Virtual environments
+.venv/
+.venv-linux/
+venv/
+
+# Local config (contains API keys and tokens)
+config.local*.yaml
+config.docker*.yaml
+
+# Runtime data
+agent-workspace/
+.yacb/
+example-workspace/
+
+# Local tooling caches
+.pytest_cache/
+.ruff_cache/
+.uv-cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local scratch files
+*.ignore
+*.bak.*
+
+# Frontend site (Vite/Node)
+site/node_modules/
+site/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

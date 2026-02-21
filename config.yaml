@@ -1,0 +1,70 @@
+# yacb configuration
+
+agents:
+  default:
+    model: anthropic/claude-sonnet-4-20250514
+    system_prompt: "You are a helpful personal assistant."
+    workspace: agent-workspace/yacb
+    tools: [filesystem, shell, web, message, cron, memory]
+    max_iterations: 20
+    temperature: 0.7
+    bot_name: yacb
+    interaction_style: casual    # casual, professional, brief, detailed
+    chat_mode: personal          # personal (proactive) or group (mention-only)
+    fallback_models: []          # Optional fallback models (aliases accepted), e.g. ["gpt-4o-mini"]
+    fallback_max_attempts: 2     # Try up to N models total (primary + fallbacks)
+    # llm_router:                 # Smart model routing (optional)
+    #   enabled: false
+    #   classifier_model: ""      # auto-picks cheapest if empty
+    #   light_model: ""           # for simple queries (greetings, math, yes/no)
+    #   heavy_model: ""           # for complex tasks (coding, reasoning, debugging)
+
+routes: {}
+  # "telegram:123456789": work
+  # "discord:guild:chan": creative
+
+channels:
+  telegram:
+    enabled: false
+    token: ""
+    allow_from: []
+  whatsapp:
+    enabled: false
+    auth_dir: ""
+    allow_from: []
+  discord:
+    enabled: false
+    token: ""
+    allow_from: []
+
+providers:
+  anthropic:
+    api_key: ""
+  openai:
+    api_key: ""
+  openrouter:
+    api_key: ""
+  opencode:
+    api_key: ""
+    api_base: "https://opencode.ai/zen/v1"
+  deepseek:
+    api_key: ""
+  gemini:
+    api_key: ""
+
+tools:
+  exec:
+    timeout: 60
+  restrict_to_workspace: false
+  tavily_api_key: ""          # Required for web_search (or set TAVILY_API_KEY env var)
+  security_audit:
+    enabled: false
+    interval_minutes: 360     # periodic config/runtime safety checks in service logs
+
+heartbeat:                    # Legacy global fallback (migrated to per-agent heartbeat at load)
+  enabled: false
+  interval_minutes: 240           # 4 hours default
+  deliver_to: ""                  # "channel:chat_id" e.g. "telegram:123456"
+  active_hours_start: "08:00"     # HH:MM — no notifications before this
+  active_hours_end: "22:00"       # HH:MM — no notifications after this
+  suppress_empty: true            # suppress HEARTBEAT_OK (nothing interesting)

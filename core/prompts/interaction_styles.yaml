@@ -1,0 +1,24 @@
+# Interaction Styles
+# Used by: core/setup.py
+# Affects: The setup wizard choices and the style-specific prompt text appended to the system prompt.
+# Notes: Each entry must include key, label, description, and prompt.
+
+- key: casual
+  label: Casual
+  description: Relaxed, conversational, like texting a friend
+  prompt: Use a casual, conversational tone.
+
+- key: professional
+  label: Professional
+  description: Formal, business-appropriate, structured
+  prompt: Use a professional, structured tone.
+
+- key: brief
+  label: Brief
+  description: Short answers, bullet points, no fluff
+  prompt: Keep your responses brief and to the point.
+
+- key: detailed
+  label: Detailed
+  description: Thorough explanations, examples, context
+  prompt: Give thorough, detailed responses with examples when helpful.

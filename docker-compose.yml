@@ -1,0 +1,22 @@
+services:
+  yacb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yacb
+    restart: unless-stopped
+    init: true
+    stdin_open: true
+    tty: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - type: bind
+        source: ./config.docker.yaml
+        target: /app/config.docker.yaml
+        bind:
+          create_host_path: false
+      - ./agent-workspace:/app/agent-workspace
+      - ./.yacb:/app/.yacb
+      - ./wa-auth:/app/wa-auth
+    command: ["run", "config.docker.yaml"]

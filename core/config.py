@@ -74,12 +74,46 @@ class HeartbeatConfig(BaseModel):
     suppress_empty: bool = True          # suppress HEARTBEAT_OK responses
 
 
-class LLMRouterConfig(BaseModel):
-    """Configuration for smart model routing."""
-    enabled: bool = False
-    classifier_model: str = ""  # auto-picks cheapest if empty
-    light_model: str = ""       # auto-picks if empty
-    heavy_model: str = ""       # auto-picks if empty
+class TierModelConfig(BaseModel):
+    model: str = ""
+
+
+class TierModelsConfig(BaseModel):
+    light: TierModelConfig = Field(default_factory=TierModelConfig)
+    medium: TierModelConfig = Field(default_factory=TierModelConfig)
+    heavy: TierModelConfig = Field(default_factory=TierModelConfig)
+
+
+class TierRulesConfig(BaseModel):
+    short_message_max_chars: int = Field(default=80, ge=10, le=500)
+    short_message_max_words: int = Field(default=12, ge=1, le=200)
+    medium_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "search",
+            "read",
+            "explain",
+            "remind",
+            "cron",
+            "file",
+            "tool",
+        ]
+    )
+    heavy_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "code",
+            "debug",
+            "refactor",
+            "implement",
+            "architecture",
+            "optimize",
+        ]
+    )
+
+
+class TierRouterConfig(BaseModel):
+    enabled: bool = True
+    tiers: TierModelsConfig = Field(default_factory=TierModelsConfig)
+    rules: TierRulesConfig = Field(default_factory=TierRulesConfig)
 
 
 class AgentConfig(BaseModel):
@@ -94,7 +128,7 @@ class AgentConfig(BaseModel):
     bot_name: str = "yacb"
     interaction_style: str = "casual"  # casual, professional, brief, detailed
     chat_mode: str = "personal"  # personal, group
-    llm_router: LLMRouterConfig | None = None
+    tier_router: TierRouterConfig = Field(default_factory=TierRouterConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     fallback_models: list[str] = Field(default_factory=list)
     fallback_max_attempts: int = Field(default=2, ge=1, le=5)
@@ -173,7 +207,7 @@ _SETTINGS_FILE = "settings.json"
 # Fields from AgentConfig that belong in settings.json (behavior, not infrastructure)
 _SETTINGS_FIELDS = {
     "model", "system_prompt", "bot_name", "interaction_style", "chat_mode",
-    "temperature", "max_tokens", "max_iterations", "llm_router", "heartbeat",
+    "temperature", "max_tokens", "max_iterations", "tier_router", "heartbeat",
 }
 
 
@@ -207,8 +241,8 @@ def apply_settings_overlay(agent_config: AgentConfig, settings: dict) -> None:
         if key not in settings:
             continue
         val = settings[key]
-        if key == "llm_router" and isinstance(val, dict):
-            agent_config.llm_router = LLMRouterConfig(**val)
+        if key == "tier_router" and isinstance(val, dict):
+            agent_config.tier_router = TierRouterConfig(**val)
         elif key == "heartbeat" and isinstance(val, dict):
             agent_config.heartbeat = HeartbeatConfig(**val)
         else:

@@ -19,8 +19,8 @@ config.local*.yaml
 config.docker*.yaml
 
 # Runtime data
-agent-workspace/
 .yacb/
+agent-workspace/
 example-workspace/
 
 # Local tooling caches
@@ -42,6 +42,8 @@ Thumbs.db
 # Local scratch files
 *.ignore
 *.bak.*
+.agents
+AGENTS.md
 
 # Frontend site (Vite/Node)
 site/node_modules/

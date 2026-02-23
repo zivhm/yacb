@@ -10,9 +10,9 @@ from core.bus.events import InboundMessage, OutboundMessage
 class MessageBus:
     """Async message bus decoupling chat channels from the agent."""
 
-    def __init__(self):
-        self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
-        self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
+    def __init__(self, inbound_maxsize: int = 200, outbound_maxsize: int = 200):
+        self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=inbound_maxsize)
+        self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue(maxsize=outbound_maxsize)
         self._running = False
 
     async def publish_inbound(self, msg: InboundMessage) -> None:

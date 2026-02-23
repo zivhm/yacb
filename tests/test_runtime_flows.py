@@ -11,7 +11,7 @@ from core.agent.loop import AgentLoop
 from core.agent.memory import MemoryStore
 from core.bus.events import InboundMessage
 from core.bus.queue import MessageBus
-from core.config import AgentConfig, load_agent_settings, save_agent_settings
+from core.config import AgentConfig, TierRouterConfig, load_agent_settings, save_agent_settings
 from core.cron.service import CronSchedule, CronService
 from core.providers.base import LLMResponse
 from core.tools.base import ToolRegistry
@@ -51,19 +51,58 @@ class StubProvider:
         return "openai/gpt-4o-mini"
 
 
-class StubHeavyRouter:
-    async def route(self, message: str) -> tuple[str, str, str]:
-        return "openai/gpt-4o-mini", message, "heavy"
+class StubFailoverProvider:
+    def __init__(self):
+        self.calls: list[dict[str, Any]] = []
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        self.calls.append({"model": model, "messages": messages})
+        if model == "openai/gpt-4.1":
+            return LLMResponse(content="Error calling LLM: timeout", finish_reason="error")
+        return LLMResponse(content="medium fallback answer")
+
+    def get_default_model(self) -> str:
+        return "openai/gpt-4.1-mini"
 
 
-class StubMediumRouter:
-    async def route(self, message: str) -> tuple[str, str, str]:
-        return "openai/gpt-4o-mini", message, "medium"
+class StubHeavyTierRouter:
+    def route(self, message: str) -> tuple[str, str, str]:
+        return "heavy", message, "openai/gpt-4o-mini"
+
+    def model_for_tier(self, tier: str) -> str:
+        return "openai/gpt-4o-mini"
+
+    def get_status(self) -> str:
+        return "stub"
 
 
-class StubGatewayRouter:
-    async def route(self, message: str) -> tuple[str, str, str]:
-        return "opencode/minimax-m2.5-free", message, "light"
+class StubMediumTierRouter:
+    def route(self, message: str) -> tuple[str, str, str]:
+        return "medium", message, "openai/gpt-4o-mini"
+
+    def model_for_tier(self, tier: str) -> str:
+        return "openai/gpt-4o-mini"
+
+    def get_status(self) -> str:
+        return "stub"
+
+
+class StubGatewayTierRouter:
+    def route(self, message: str) -> tuple[str, str, str]:
+        return "light", message, "opencode/minimax-m2.5-free"
+
+    def model_for_tier(self, tier: str) -> str:
+        return "opencode/minimax-m2.5-free"
+
+    def get_status(self) -> str:
+        return "stub"
 
 
 class DummyTools:
@@ -93,11 +132,18 @@ async def test_inbound_to_outbound_flow(tmp_path: Path) -> None:
                 content="hi there",
             )
         )
-        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=5.0)
+        outbound = None
+        for _ in range(3):
+            candidate = await asyncio.wait_for(bus.consume_outbound(), timeout=5.0)
+            if candidate.metadata.get("thinking"):
+                continue
+            outbound = candidate
+            break
     finally:
         agent.stop()
         await asyncio.wait_for(task, timeout=3.0)
 
+    assert outbound is not None
     assert outbound.channel == "telegram"
     assert outbound.chat_id == "c1"
     assert outbound.content == "hello from yacb"
@@ -226,7 +272,7 @@ async def test_gateway_models_skip_static_support_promotion(tmp_path: Path, monk
         agent_config=config,
         workspace=tmp_path,
         tool_registry=DummyTools(),
-        llm_router=StubGatewayRouter(),
+        tier_router=StubGatewayTierRouter(),
     )
 
     # Simulate stale LiteLLM metadata returning False for this model.
@@ -244,6 +290,158 @@ async def test_gateway_models_skip_static_support_promotion(tmp_path: Path, monk
     assert response is not None
     assert response.content == "hello from gateway model"
     assert provider.calls[0]["model"] == "opencode/minimax-m2.5-free"
+
+
+@pytest.mark.asyncio
+async def test_tier_model_error_falls_back_to_medium_model(tmp_path: Path) -> None:
+    bus = MessageBus()
+    provider = StubFailoverProvider()
+    config = AgentConfig(model="openai/gpt-4.1-mini", tools=[], max_iterations=2)
+
+    class HeavyThenMediumRouter:
+        def route(self, message: str) -> tuple[str, str, str]:
+            return "heavy", message, "openai/gpt-4.1"
+
+        def model_for_tier(self, tier: str) -> str:
+            if tier == "medium":
+                return "openai/gpt-4.1-mini"
+            return "openai/gpt-4.1"
+
+        def get_status(self) -> str:
+            return "stub"
+
+    agent = AgentLoop(
+        bus=bus,
+        provider=provider,
+        agent_config=config,
+        workspace=tmp_path,
+        tier_router=HeavyThenMediumRouter(),
+    )
+
+    response = await agent._process_message(
+        InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="debug this code")
+    )
+
+    assert response is not None
+    assert response.content == "medium fallback answer"
+    assert response.metadata.get("model") == "openai/gpt-4.1-mini"
+    assert [c["model"] for c in provider.calls] == ["openai/gpt-4.1", "openai/gpt-4.1-mini"]
+
+
+@pytest.mark.asyncio
+async def test_tier_failover_retries_medium_only_once_per_turn(tmp_path: Path) -> None:
+    bus = MessageBus()
+
+    class AlwaysErrorProvider:
+        def __init__(self) -> None:
+            self.calls: list[str | None] = []
+
+        async def chat(
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None = None,
+            model: str | None = None,
+            max_tokens: int = 4096,
+            temperature: float = 0.7,
+        ) -> LLMResponse:
+            self.calls.append(model)
+            return LLMResponse(content="Error calling LLM: timeout", finish_reason="error")
+
+        def get_default_model(self) -> str:
+            return "openai/gpt-4.1-mini"
+
+    class HeavyThenMediumRouter:
+        def route(self, message: str) -> tuple[str, str, str]:
+            return "heavy", message, "openai/gpt-4.1"
+
+        def model_for_tier(self, tier: str) -> str:
+            if tier == "medium":
+                return "openai/gpt-4.1-mini"
+            return "openai/gpt-4.1"
+
+        def get_status(self) -> str:
+            return "stub"
+
+    provider = AlwaysErrorProvider()
+    config = AgentConfig(model="openai/gpt-4.1-mini", tools=[], max_iterations=2)
+    agent = AgentLoop(
+        bus=bus,
+        provider=provider,
+        agent_config=config,
+        workspace=tmp_path,
+        tier_router=HeavyThenMediumRouter(),
+    )
+
+    response = await agent._process_message(
+        InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="debug this")
+    )
+
+    assert response is not None
+    assert response.content.startswith("Error calling LLM:")
+    assert [m for m in provider.calls] == ["openai/gpt-4.1", "openai/gpt-4.1-mini"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_tier_commands_are_rejected_with_migration_hint(tmp_path: Path) -> None:
+    bus = MessageBus()
+    provider = StubProvider(["llm should not run"])
+    config = AgentConfig(model="openai/gpt-4o-mini", tools=[], max_iterations=1)
+    agent = AgentLoop(bus=bus, provider=provider, agent_config=config, workspace=tmp_path)
+
+    heavy = await agent._process_message(
+        InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="!heavy think deeply")
+    )
+    light = await agent._process_message(
+        InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="!light quick answer")
+    )
+
+    assert heavy is not None
+    assert light is not None
+    assert "`!heavy` is deprecated." in heavy.content
+    assert "Use `!tier heavy <message>` instead." in heavy.content
+    assert "`!light` is deprecated." in light.content
+    assert "Use `!tier light <message>` instead." in light.content
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_tier_override_command_is_accepted_and_routed(tmp_path: Path) -> None:
+    from core.agent.tier_router import TierRouter
+
+    bus = MessageBus()
+    provider = StubProvider(["routed response"])
+    config = AgentConfig(model="openai/gpt-4.1-mini", tools=[], max_iterations=2)
+    tier_router = TierRouter(
+        TierRouterConfig(
+            enabled=True,
+            tiers={
+                "light": {"model": "openai/gpt-4.1-mini"},
+                "medium": {"model": "openai/gpt-4.1-mini"},
+                "heavy": {"model": "openai/gpt-4.1"},
+            },
+        ),
+        default_model=config.model,
+    )
+    agent = AgentLoop(
+        bus=bus,
+        provider=provider,
+        agent_config=config,
+        workspace=tmp_path,
+        tier_router=tier_router,
+    )
+
+    response = await agent._process_message(
+        InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="!tier heavy debug this flow")
+    )
+
+    assert response is not None
+    assert response.content == "routed response"
+    assert response.metadata.get("tier") == "heavy"
+    assert response.metadata.get("model") == "openai/gpt-4.1"
+    assert provider.calls
+    assert provider.calls[0]["model"] == "openai/gpt-4.1"
+    assert provider.calls[0]["messages"][-1]["role"] == "user"
+    assert provider.calls[0]["messages"][-1]["content"] == "debug this flow"
 
 
 @pytest.mark.asyncio
@@ -484,7 +682,7 @@ async def test_heavy_turn_keeps_turn_id_for_thinking_clear(tmp_path: Path) -> No
         provider=provider,
         agent_config=config,
         workspace=tmp_path,
-        llm_router=StubHeavyRouter(),
+        tier_router=StubHeavyTierRouter(),
     )
 
     response = await agent._process_message(
@@ -511,7 +709,7 @@ async def test_heavy_turn_appends_daily_note_line(tmp_path: Path) -> None:
         provider=provider,
         agent_config=config,
         workspace=tmp_path,
-        llm_router=StubHeavyRouter(),
+        tier_router=StubHeavyTierRouter(),
     )
 
     await agent._process_message(
@@ -535,7 +733,7 @@ async def test_medium_turn_sends_working_placeholder_and_clears_it(tmp_path: Pat
         provider=provider,
         agent_config=config,
         workspace=tmp_path,
-        llm_router=StubMediumRouter(),
+        tier_router=StubMediumTierRouter(),
     )
 
     response = await agent._process_message(

@@ -14,6 +14,12 @@ You need:
 - At least one LLM provider API key (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, or OpenCode Zen)
 - At least one channel account (Telegram is usually the easiest first run)
 
+Status note:
+
+- Scope 1 (Lean Reliability Plan) is completed as of 2026-02-23.
+- Tier routing command surface uses `!tier <light|medium|heavy> <message>`.
+- Legacy `!light`, `!heavy`, and `!think` commands are deprecated.
+
 ## 2. Install
 
 ```bash
@@ -54,7 +60,7 @@ The setup wizard handles:
 - channel access validation (`allow_from`)
 - chat mode
 - first-run identity onboarding bootstrap (`BOOTSTRAP.md`)
-- optional smart router
+- optional tier router
 - optional proactive heartbeat
 - optional skill install
 - pre-save warnings + config backup on overwrite
@@ -126,7 +132,7 @@ uv run yacb config whatsapp
 
 - Restrict channel access (`allow_from`) so strangers cannot use your credits.
 - Keep `chat_mode: personal` unless you mainly run in busy groups.
-- Enable smart routing if you want better cost/performance balance.
+- Enable tier routing if you want better cost/performance balance.
 - Add fallback models for resilience on provider hiccups.
 - Enable heartbeat only after your base chat flow is stable.
 
@@ -135,7 +141,7 @@ uv run yacb config whatsapp
 | Setting | Path | Purpose |
 |---|---|---|
 | Base model | `agents.default.model` | Default model (`provider/model`) |
-| Smart routing | `agents.default.llm_router.enabled` | `light/medium/heavy` routing |
+| Tier routing | `agents.default.tier_router.enabled` | Deterministic `light/medium/heavy` routing |
 | Fallback models | `agents.default.fallback_models` | Ordered transient-failure fallback list |
 | Max attempts | `agents.default.fallback_max_attempts` | Total model tries (1-5) |
 | Chat mode | `agents.default.chat_mode` | `personal` or `group` |
@@ -161,21 +167,21 @@ Notes:
 - `config.local.yaml` remains the default infra/secrets source for local CLI runs.
 - `config.docker.yaml` is used by the Docker Compose workflow.
 
-## 9. Smart Routing and Fallback (Quick Reference)
+## 9. Tier Routing and Fallback (Quick Reference)
 
 In-chat tier overrides:
 
-- `!light ...`
-- `!heavy ...`
-- `!think ...`
+- `!tier light ...`
+- `!tier medium ...`
+- `!tier heavy ...`
 
-Tier intent (default classifier behavior):
+Tier intent (default deterministic behavior):
 
 - `light`: simple questions, greetings, skill-use prompts, dates/definitions, short yes/no tasks
 - `medium`: conversation, explanations, file tasks, web searches, and tool-using requests
 - `heavy`: coding, debugging, complex reasoning, multi-step analysis, creative writing
 
-Auto-resolve patterns (used when `light_model`/`heavy_model` are not set manually):
+Default setup picks provider-aware light/heavy models and keeps `medium` on your selected base model.
 
 | Provider | Light preference | Heavy preference |
 |---|---|---|
@@ -192,8 +198,6 @@ Alias examples:
 - `gpt-4o-mini` -> `openai/gpt-4o-mini`
 - `gemini-flash` -> `gemini/gemini-2.5-flash`
 - `qwen3-coder` -> `opencode/qwen3-coder`
-
-Note: alias expansion and auto-resolved tier defaults are separate paths, so auto-resolve may choose newer provider variants than these shorthand aliases.
 
 OpenCode Zen compatibility:
 

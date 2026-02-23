@@ -200,7 +200,7 @@ class Clvd:
         logger.info("Inbound dispatcher started")
         while True:
             try:
-                msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
+                msg = await self.bus.consume_inbound()
 
                 # Resolve agent
                 agent_name = self.router.resolve(msg.channel, msg.chat_id)
@@ -224,8 +224,6 @@ class Clvd:
                         content=f"Sorry, I encountered an error: {e}",
                         metadata={"clear_thinking": True},
                     ))
-            except asyncio.TimeoutError:
-                continue
             except asyncio.CancelledError:
                 break
 
@@ -234,7 +232,7 @@ class Clvd:
         logger.info("Outbound dispatcher started")
         while True:
             try:
-                msg = await asyncio.wait_for(self.bus.consume_outbound(), timeout=1.0)
+                msg = await self.bus.consume_outbound()
                 channel = self._channels.get(msg.channel)
                 if not channel:
                     logger.warning(f"Unknown channel: {msg.channel}")
@@ -261,8 +259,6 @@ class Clvd:
                         await self._request_update(msg.channel, msg.chat_id)
                 except Exception as e:
                     logger.error(f"Error sending to {msg.channel}: {e}")
-            except asyncio.TimeoutError:
-                continue
             except asyncio.CancelledError:
                 break
 

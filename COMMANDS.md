@@ -38,12 +38,12 @@ Docker note:
 - `!<shell command>` -> run shell directly (example: `!ls -la`)
 - `!model` -> show current model + tier routing status
 - `!model <provider/model>` -> set default model
-- `!model <light|medium|heavy> <provider/model>` -> set tier model
+- `!tier <light|medium|heavy> <message>` -> force routing tier for one message
+- Legacy tier commands `!light`, `!heavy`, `!think` are deprecated -> use `!tier ...`
 - `!restart` -> restart confirmation prompt
 - `!restart now` -> restart yacb process
 - `!update` -> update confirmation prompt
 - `!update now` -> run `git pull --ff-only` then restart
-- `!light ...`, `!heavy ...`, `!think ...` -> force routing tier for that message
 
 Natural language also works for most tasks:
 
@@ -74,7 +74,7 @@ Natural language also works for most tasks:
 
 - Runtime behavior/state is per agent in `agent-workspace/<agent>/settings.json`.
 - Conversation logs are persisted in SQLite and can be queried by the `conversation_history` tool.
-- Reserved bang prefixes `!model`, `!light`, `!heavy`, `!think` are not executed as shell commands.
+- Reserved bang prefixes `!model`, `!tier`, `!restart`, `!update` are not executed as shell commands.
 - Default router intent: `light` for simple/skill prompts, `medium` for tool/search/file tasks, `heavy` for coding/debugging.
 - Optional periodic audits (`tools.security_audit.*`) write summary lines to service logs.
 - Command behavior may differ by chat mode (`personal` vs `group`) and channel policies.

@@ -37,9 +37,6 @@ class LiteLLMProvider(LLMProvider):
             self._setup_env(api_key, api_base, self.default_model)
         self._setup_known_provider_envs(provider_api_keys)
 
-        if api_base:
-            litellm.api_base = api_base
-
         litellm.suppress_debug_info = True
         litellm.drop_params = True
 

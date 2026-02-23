@@ -837,7 +837,7 @@ def _sync_runtime_settings_from_setup(
     workspace: Path,
     provider_name: str,
     medium_model: str,
-    router_cfg: dict | None,
+    tier_cfg: dict | None,
 ) -> Path:
     """Update settings.json so runtime matches onboarding selections."""
     from core.config import load_agent_settings
@@ -862,24 +862,29 @@ def _sync_runtime_settings_from_setup(
     settings = load_agent_settings(workspace)
     settings["model"] = normalize_model(medium_model, medium_model)
 
-    router_enabled = bool(router_cfg and router_cfg.get("enabled"))
-    if router_enabled:
-        light = normalize_model(str(router_cfg.get("light_model", "")), settings["model"])
-        heavy = normalize_model(str(router_cfg.get("heavy_model", "")), settings["model"])
-        classifier = normalize_model(str(router_cfg.get("classifier_model", "")), light)
-        settings["llm_router"] = {
-            "enabled": True,
-            "classifier_model": classifier,
-            "light_model": light,
-            "heavy_model": heavy,
-        }
+    tier_enabled = bool(tier_cfg and tier_cfg.get("enabled"))
+    tiers_cfg = (tier_cfg or {}).get("tiers") if isinstance(tier_cfg, dict) else None
+    light_raw = ""
+    heavy_raw = ""
+    if isinstance(tiers_cfg, dict):
+        light_raw = str(((tiers_cfg.get("light") or {}).get("model", "")))
+        heavy_raw = str(((tiers_cfg.get("heavy") or {}).get("model", "")))
     else:
-        settings["llm_router"] = {
-            "enabled": False,
-            "classifier_model": "",
-            "light_model": "",
-            "heavy_model": "",
-        }
+        # Backward compatibility with legacy setup shape.
+        light_raw = str((tier_cfg or {}).get("light_model", ""))
+        heavy_raw = str((tier_cfg or {}).get("heavy_model", ""))
+
+    light = normalize_model(light_raw, settings["model"])
+    heavy = normalize_model(heavy_raw, settings["model"])
+    settings["tier_router"] = {
+        "enabled": tier_enabled,
+        "tiers": {
+            "light": {"model": light if tier_enabled else ""},
+            "medium": {"model": settings["model"]},
+            "heavy": {"model": heavy if tier_enabled else ""},
+        },
+    }
+    settings.pop("llm_router", None)
 
     settings_path = workspace / "settings.json"
     settings_path.write_text(
@@ -1624,7 +1629,7 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
             console.print(
                 "\n[yellow bold]Warning:[/yellow bold] [yellow]Provider metadata says this model doesn't support tools/function calling. "
                 "Your bot will only be able to chat — tools (web search, files, shell, etc.) won't work. "
-                "Pick a different model or enable smart routing (Step 8) to auto-promote when tools are needed.[/yellow]\n"
+                "Pick a different model or enable tier routing (Step 8) to auto-promote when tools are needed.[/yellow]\n"
             )
         elif provider_tools_ok is None:
             runtime_tools_ok, runtime_reason = _probe_model_tools_support(
@@ -1637,7 +1642,7 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
                 console.print(
                     "\n[yellow bold]Warning:[/yellow bold] [yellow]This model doesn't support tool/function calls for yacb's current API path. "
                     "Your bot will only be able to chat — tools (web search, files, shell, etc.) won't work. "
-                    "Pick a different model or enable smart routing (Step 8) to auto-promote when tools are needed.[/yellow]\n"
+                    "Pick a different model or enable tier routing (Step 8) to auto-promote when tools are needed.[/yellow]\n"
                 )
                 if runtime_reason:
                     console.print(f"[dim]Details: {runtime_reason}[/dim]\n")
@@ -1650,12 +1655,12 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
                         console.print(
                             "\n[yellow bold]Warning:[/yellow bold] [yellow]This model doesn't support function calling. "
                             "Your bot will only be able to chat — tools (web search, files, shell, etc.) won't work. "
-                            "Pick a different model or enable smart routing (Step 8) to auto-promote when tools are needed.[/yellow]\n"
+                            "Pick a different model or enable tier routing (Step 8) to auto-promote when tools are needed.[/yellow]\n"
                         )
                 elif runtime_reason:
                     console.print(
                         "[dim]Could not auto-verify tool support for this model. "
-                        "If tool calls fail at runtime, pick another model or enable smart routing.[/dim]"
+                        "If tool calls fail at runtime, pick another model or enable tier routing.[/dim]"
                     )
     except Exception:
         pass
@@ -1831,21 +1836,21 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
     summary["Customization"] = "First live chat onboarding"
 
     # ╔══════════════════════════════════════════════════════════════╗
-    # ║  STEP 8: Smart routing (optional)                           ║
+    # ║  STEP 8: Tier routing (optional)                            ║
     # ╚══════════════════════════════════════════════════════════════╝
 
-    _step_header(8, "Smart model routing (optional)",
-                 "Route simple messages to cheaper models to save money.")
+    _step_header(8, "Tier routing (optional)",
+                 "Route simple prompts to lighter models and complex prompts to heavier models.")
 
     console.print(
-        "[bold]Smart routing[/bold] uses a tiny classifier call to pick the right model:\n"
-        "  [cyan]light[/cyan]  - greetings, math, yes/no  ->  cheap model (e.g. Haiku)\n"
-        "  [cyan]medium[/cyan] - normal chat               ->  your chosen model\n"
-        "  [cyan]heavy[/cyan]  - coding, reasoning          ->  powerful model (e.g. Opus)\n\n"
-        "[dim]You can also force a tier with prefixes: !light, !heavy, !think[/dim]\n"
+        "[bold]Tier routing[/bold] uses deterministic rules (no classifier call):\n"
+        "  [cyan]light[/cyan]  - short/simple prompts  -> cheaper model\n"
+        "  [cyan]medium[/cyan] - default workload       -> your chosen model\n"
+        "  [cyan]heavy[/cyan]  - complex/coding prompts -> stronger model\n\n"
+        "[dim]You can force a tier per message: !tier <light|medium|heavy> <message>[/dim]\n"
     )
 
-    if Confirm.ask("Enable smart routing?", default=False):
+    if Confirm.ask("Enable tier routing?", default=False):
         # Auto-configure based on provider
         _router_defaults = {
             "anthropic": {
@@ -1909,7 +1914,7 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
                 hints=("sonnet", "opus", "gpt-4o", "o3", "qwen3-coder"),
             )
 
-        # Ensure router models are actually callable with this key; fallback to medium when not.
+        # Ensure tier models are actually callable with this key; fallback to medium when not.
         checked_light, light_reason = _probe_model_chat_support(
             provider_name=provider["name"],
             api_key=api_key,
@@ -1918,7 +1923,7 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
         )
         if not checked_light:
             console.print(
-                f"[yellow]Smart routing: light model '{light}' is unavailable; using '{model_id}' instead.[/yellow]"
+                f"[yellow]Tier routing: light model '{light}' is unavailable; using '{model_id}' instead.[/yellow]"
             )
             if light_reason:
                 console.print(f"[dim]Reason: {light_reason}[/dim]")
@@ -1932,41 +1937,43 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
         )
         if not checked_heavy:
             console.print(
-                f"[yellow]Smart routing: heavy model '{heavy}' is unavailable; using '{model_id}' instead.[/yellow]"
+                f"[yellow]Tier routing: heavy model '{heavy}' is unavailable; using '{model_id}' instead.[/yellow]"
             )
             if heavy_reason:
                 console.print(f"[dim]Reason: {heavy_reason}[/dim]")
             heavy = model_id
 
-        router_cfg = {
+        tier_cfg = {
             "enabled": True,
-            "classifier_model": light,
             "light_model": light,
             "heavy_model": heavy,
         }
-        light = normalize_selected_model(router_cfg.get("light_model", ""), model_id)
-        heavy = normalize_selected_model(router_cfg.get("heavy_model", ""), model_id)
-        classifier = normalize_selected_model(router_cfg.get("classifier_model", ""), light)
-        config["agents"]["default"]["llm_router"] = {
+        light = normalize_selected_model(tier_cfg.get("light_model", ""), model_id)
+        heavy = normalize_selected_model(tier_cfg.get("heavy_model", ""), model_id)
+        config["agents"]["default"]["tier_router"] = {
             "enabled": True,
-            "classifier_model": classifier,
-            "light_model": light,
-            "heavy_model": heavy,
+            "tiers": {
+                "light": {"model": light},
+                "medium": {"model": model_id},
+                "heavy": {"model": heavy},
+            },
         }
-        console.print("[green]v[/green] Smart routing enabled")
+        console.print("[green]v[/green] Tier routing enabled")
         console.print(f"  light: {light}")
         console.print(f"  medium: {model_id}")
         console.print(f"  heavy: {heavy}")
-        summary["Smart routing"] = f"light={light.split('/')[-1]}, heavy={heavy.split('/')[-1]}"
+        summary["Tier routing"] = f"light={light.split('/')[-1]}, heavy={heavy.split('/')[-1]}"
     else:
-        config["agents"]["default"]["llm_router"] = {
+        config["agents"]["default"]["tier_router"] = {
             "enabled": False,
-            "classifier_model": "",
-            "light_model": "",
-            "heavy_model": "",
+            "tiers": {
+                "light": {"model": ""},
+                "medium": {"model": model_id},
+                "heavy": {"model": ""},
+            },
         }
         console.print("[dim]Skipped - all messages will use your chosen model.[/dim]")
-        summary["Smart routing"] = "Disabled"
+        summary["Tier routing"] = "Disabled"
 
     # ╔══════════════════════════════════════════════════════════════╗
     # ║  STEP 9: Proactive updates (heartbeat)                      ║
@@ -2214,7 +2221,7 @@ def run_setup(config_path: str = "config.local.yaml", tui: bool = False) -> None
         workspace=Path(agent_cfg["workspace"]),
         provider_name=provider["name"],
         medium_model=agent_cfg["model"],
-        router_cfg=agent_cfg.get("llm_router"),
+        tier_cfg=agent_cfg.get("tier_router"),
     )
     console.print(f"[dim]Synced runtime settings: {settings_path}[/dim]")
     bootstrap_path, bootstrap_created = _ensure_first_run_bootstrap(Path(agent_cfg["workspace"]))

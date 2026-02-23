@@ -396,9 +396,10 @@ def test_sync_runtime_settings_from_setup_overwrites_model_and_router(tmp_path) 
     workspace = tmp_path / "agent-workspace" / "yacb"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "settings.json").write_text(
-        '{"model":"anthropic/claude-sonnet-4-20250514","llm_router":{"enabled":true,'
-        '"classifier_model":"anthropic/claude-haiku-4-20250514","light_model":"anthropic/claude-haiku-4-20250514",'
-        '"heavy_model":"anthropic/claude-sonnet-4-20250514"},"verbose_logs":{"enabled":true}}',
+        '{"model":"anthropic/claude-sonnet-4-20250514","tier_router":{"enabled":true,'
+        '"tiers":{"light":{"model":"anthropic/claude-haiku-4-20250514"},'
+        '"medium":{"model":"anthropic/claude-sonnet-4-20250514"},'
+        '"heavy":{"model":"anthropic/claude-sonnet-4-20250514"}}},"verbose_logs":{"enabled":true}}',
         encoding="utf-8",
     )
 
@@ -406,7 +407,7 @@ def test_sync_runtime_settings_from_setup_overwrites_model_and_router(tmp_path) 
         workspace=workspace,
         provider_name="opencode",
         medium_model="opencode/qwen3-coder",
-        router_cfg={"enabled": False},
+        tier_cfg={"enabled": False},
     )
     assert settings_path == workspace / "settings.json"
     saved = settings_path.read_text(encoding="utf-8")
@@ -423,18 +424,43 @@ def test_sync_runtime_settings_from_setup_normalizes_router_models(tmp_path) -> 
         workspace=workspace,
         provider_name="opencode",
         medium_model="qwen3-coder",
-        router_cfg={
+        tier_cfg={
             "enabled": True,
-            "classifier_model": "anthropic/claude-haiku-4-20250514",
             "light_model": "minimax-m2.5-free",
             "heavy_model": "anthropic/claude-sonnet-4-20250514",
         },
     )
     saved = settings_path.read_text(encoding="utf-8")
     assert '"model": "opencode/qwen3-coder"' in saved
-    assert '"classifier_model": "opencode/minimax-m2.5-free"' in saved
-    assert '"light_model": "opencode/minimax-m2.5-free"' in saved
-    assert '"heavy_model": "opencode/qwen3-coder"' in saved
+    assert '"tier_router"' in saved
+    assert '"light": {' in saved
+    assert '"model": "opencode/minimax-m2.5-free"' in saved
+    assert '"heavy": {' in saved
+
+
+def test_sync_runtime_settings_from_setup_accepts_tier_router_shape(tmp_path) -> None:
+    workspace = tmp_path / "agent-workspace" / "yacb"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings_path = _sync_runtime_settings_from_setup(
+        workspace=workspace,
+        provider_name="openai",
+        medium_model="openai/gpt-4.1-mini",
+        tier_cfg={
+            "enabled": True,
+            "tiers": {
+                "light": {"model": "openai/gpt-4.1-nano"},
+                "medium": {"model": "openai/gpt-4.1-mini"},
+                "heavy": {"model": "openai/gpt-4.1"},
+            },
+        },
+    )
+
+    saved = settings_path.read_text(encoding="utf-8")
+    assert '"model": "openai/gpt-4.1-mini"' in saved
+    assert '"enabled": true' in saved
+    assert '"openai/gpt-4.1-nano"' in saved
+    assert '"openai/gpt-4.1"' in saved
 
 
 def test_render_first_run_bootstrap_contains_focused_questions() -> None:

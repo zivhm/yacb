@@ -31,6 +31,10 @@ class Database:
         if self._db is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             self._db = sqlite3.connect(str(self.db_path))
+            # Reliability defaults: allow concurrent readers and reduce lock thrash.
+            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db.execute("PRAGMA synchronous=NORMAL")
+            self._db.execute("PRAGMA busy_timeout=5000")
         if not self._initialized:
             await self._create_tables()
             self._initialized = True

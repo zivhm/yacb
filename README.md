@@ -90,6 +90,12 @@
 It focuses on predictable behavior across channels, reminders that actually
 fire, and a skills-first structure that keeps the core runtime straightforward.
 
+### Scope Status
+
+- Scope 1 (Lean Reliability Plan) is completed as of 2026-02-23.
+- Current routing model is deterministic `tier_router` (`light` / `medium` / `heavy`) with `!tier` override.
+- Legacy `!light`, `!heavy`, `!think` are deprecated and replaced by `!tier`.
+
 ### Project Origin
 
 yacb began as a de-bloating exercise on [**OpenClaw**](https://github.com/openclaw/openclaw).

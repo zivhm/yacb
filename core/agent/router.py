@@ -56,11 +56,8 @@ class AgentRouter:
         # Build tool registry (pass the same cron_service)
         tools = self._build_tools(agent_config, workspace, cron_service)
 
-        # Build LLM router if enabled
-        llm_router = None
-        if agent_config.llm_router and agent_config.llm_router.enabled:
-            from core.agent.llm_router import LLMRouter
-            llm_router = LLMRouter(provider, agent_config.llm_router, agent_config.model)
+        from core.agent.tier_router import TierRouter
+        tier_router = TierRouter(agent_config.tier_router, agent_config.model)
 
         agent = AgentLoop(
             bus=self.bus,
@@ -69,7 +66,7 @@ class AgentRouter:
             workspace=workspace,
             tool_registry=tools,
             cron_service=cron_service,
-            llm_router=llm_router,
+            tier_router=tier_router,
             agent_name=agent_name,
         )
 

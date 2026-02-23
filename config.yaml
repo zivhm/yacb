@@ -13,11 +13,17 @@ agents:
     chat_mode: personal          # personal (proactive) or group (mention-only)
     fallback_models: []          # Optional fallback models (aliases accepted), e.g. ["gpt-4o-mini"]
     fallback_max_attempts: 2     # Try up to N models total (primary + fallbacks)
-    # llm_router:                 # Smart model routing (optional)
-    #   enabled: false
-    #   classifier_model: ""      # auto-picks cheapest if empty
-    #   light_model: ""           # for simple queries (greetings, math, yes/no)
-    #   heavy_model: ""           # for complex tasks (coding, reasoning, debugging)
+    # tier_router:                # Deterministic tier routing (optional)
+    #   enabled: true
+    #   tiers:
+    #     light: { model: "" }    # override light model
+    #     medium: { model: "" }   # override medium model (default is agents.default.model)
+    #     heavy: { model: "" }    # override heavy model
+    #   rules:
+    #     short_message_max_chars: 80
+    #     short_message_max_words: 12
+    #     medium_keywords: ["search", "read", "explain", "remind", "cron", "file", "tool"]
+    #     heavy_keywords: ["code", "debug", "refactor", "implement", "architecture", "optimize"]
 
 routes: {}
   # "telegram:123456789": work

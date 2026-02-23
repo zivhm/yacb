@@ -89,6 +89,7 @@ _BANG_SHELL_RESERVED_PREFIXES = (
     "!model",
     "!restart",
     "!update",
+    "!tier",
     "!light",
     "!heavy",
     "!think",
@@ -172,7 +173,7 @@ class AgentLoop:
         workspace: Path,
         tool_registry: Any = None,
         cron_service: Any = None,
-        llm_router: Any = None,
+        tier_router: Any = None,
         agent_name: str = "default",
     ):
         self.bus = bus
@@ -182,7 +183,7 @@ class AgentLoop:
         self.context = ContextBuilder(workspace, agent_config.system_prompt, agent_config=agent_config)
         self.onboarding = FirstRunOnboarding(workspace)
         self.cron_service = cron_service
-        self.llm_router = llm_router
+        self.tier_router = tier_router
         self.agent_name = agent_name
         self._running = False
 
@@ -371,8 +372,8 @@ class AgentLoop:
             return False, ""
 
         model = self.agent_config.model
-        if self.llm_router and getattr(self.llm_router, "default_model", ""):
-            model = str(self.llm_router.default_model).strip() or model
+        if self.tier_router:
+            model = self.tier_router.model_for_tier("medium")
 
         prompt = (
             "Analyze these recent chat changes since the last daily update.\n"
@@ -501,27 +502,12 @@ class AgentLoop:
 
     async def _handle_model_command(self, raw: str) -> str:
         """Handle !model command. Returns a status/confirmation string."""
-        parts = raw.strip().split(None, 2)  # ['!model', ...]
+        parts = raw.strip().split(None, 1)
 
         # !model (no args) -> show status
         if len(parts) == 1:
-            if self.llm_router:
-                return self.llm_router.get_status()
-            return f"Current model: {self.agent_config.model}\n(LLM router is disabled)"
-
-        # !model <tier> <model> or !model <model>
-        tier_names = {"light", "medium", "heavy"}
-        if len(parts) == 3 and parts[1].lower() in tier_names:
-            tier = parts[1].lower()
-            model = normalize_model_name(parts[2])
-            ok, err = _validate_model_id(model)
-            if not ok:
-                return f"Invalid model: {err}"
-            if not self.llm_router:
-                return "LLM router is disabled. Enable it in config to use tier models."
-            self.llm_router.update_tier_model(tier, model)
-            self._persist_model_change(tier=tier, model=model)
-            return f"{tier} tier updated to {model}\n\n{self.llm_router.get_status()}"
+            status = self.tier_router.get_status() if self.tier_router else "Tier router is disabled"
+            return f"Current model: {self.agent_config.model}\n{status}"
 
         # !model <model> -> change default (medium)
         model = normalize_model_name(parts[1])
@@ -529,13 +515,11 @@ class AgentLoop:
         if not ok:
             return f"Invalid model: {err}"
         self.agent_config.model = model
-        if self.llm_router:
-            self.llm_router.update_default_model(model)
-            self._persist_model_change(default=model)
-            return f"Default model updated to {model}\n\n{self.llm_router.get_status()}"
-        else:
-            self._persist_model_change(default=model)
-            return f"Model updated to {model}"
+        if self.tier_router:
+            self.tier_router.update_default_model(model)
+        self._persist_model_change(default=model)
+        status = self.tier_router.get_status() if self.tier_router else "Tier router is disabled"
+        return f"Model updated to {model}\n\n{status}"
 
     @staticmethod
     def _handle_restart_command(raw: str) -> tuple[str, bool]:
@@ -569,24 +553,13 @@ class AgentLoop:
 
         return "Usage: `!update now`", False
 
-    def _persist_model_change(
-        self,
-        default: str | None = None,
-        tier: str | None = None,
-        model: str | None = None,
-    ) -> None:
+    def _persist_model_change(self, default: str | None = None) -> None:
         """Persist model change to workspace settings.json."""
-        from core.config import load_agent_settings, save_agent_settings
+        from core.config import save_agent_settings
 
         try:
             if default:
                 save_agent_settings(self.workspace, "model", default)
-
-            if tier and model:
-                settings = load_agent_settings(self.workspace)
-                router = settings.get("llm_router", {})
-                router[f"{tier}_model"] = model
-                save_agent_settings(self.workspace, "llm_router", router)
 
             logger.info("Model change persisted to settings.json")
         except Exception as e:
@@ -664,6 +637,17 @@ class AgentLoop:
                 content=response_text,
                 metadata=metadata,
             )
+        if first_word in {"!light", "!heavy", "!think"}:
+            tier_hint = "heavy" if first_word in {"!heavy", "!think"} else "light"
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=(
+                    f"`{first_word}` is deprecated.\n"
+                    f"Use `!tier {tier_hint} <message>` instead."
+                ),
+                metadata={"model": "system/control", "tier": "medium"},
+            )
 
         # Fast path: shell shortcut for messages starting with "!".
         # Reserved bang commands still go through their own handlers.
@@ -714,10 +698,20 @@ class AgentLoop:
 
         # Route to the right model (and strip any prefix override)
         model = self.agent_config.model
-        tier = ""
+        tier = "medium"
         user_content = msg.content
-        if self.llm_router:
-            model, user_content, tier = await self.llm_router.route(msg.content)
+        medium_model = self.agent_config.model
+        if self.tier_router:
+            medium_model = self.tier_router.model_for_tier("medium")
+            try:
+                tier, user_content, model = self.tier_router.route(msg.content)
+            except ValueError as e:
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=str(e),
+                    metadata={"model": "system/control", "tier": "medium"},
+                )
             logger.debug(f"Router decided: tier={tier}, model={model}")
 
         # Send a short progress placeholder for medium/heavy turns.
@@ -765,6 +759,7 @@ class AgentLoop:
         repeated_tool_errors: dict[tuple[str, str], int] = {}
         blocked_tools_due_to_errors: set[str] = set()
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        failover_attempted = False
         logger.debug(f"Using model: {model}")
 
         while iteration < self.agent_config.max_iterations:
@@ -782,6 +777,18 @@ class AgentLoop:
             if response.usage:
                 for k in total_usage:
                     total_usage[k] += response.usage.get(k, 0)
+
+            if (
+                response.finish_reason == "error"
+                and not failover_attempted
+                and model != medium_model
+            ):
+                logger.warning(
+                    f"Tier model '{model}' failed for this turn; retrying once with medium '{medium_model}'"
+                )
+                model = medium_model
+                failover_attempted = True
+                continue
 
             logger.debug(
                 f"LLM response: has_tools={response.has_tool_calls}, "

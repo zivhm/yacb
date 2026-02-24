@@ -78,3 +78,20 @@ Natural language also works for most tasks:
 - Default router intent: `light` for simple/skill prompts, `medium` for tool/search/file tasks, `heavy` for coding/debugging.
 - Optional periodic audits (`tools.security_audit.*`) write summary lines to service logs.
 - Command behavior may differ by chat mode (`personal` vs `group`) and channel policies.
+
+## Runtime Resource Monitor (Linux/Pi)
+
+- Default (24h, 10s interval): `uv run yacb-monitor`
+- 48h monitor: `uv run yacb-monitor --hours 48 --interval 15 --output .yacb/runtime-monitor-48h.csv`
+- Monitor two-instance patterns (if both names include `core.main run`): `uv run yacb-monitor --pattern "core.main run" --hours 48`
+
+Legacy equivalent still works:
+
+- `python3 scripts/runtime_monitor.py ...`
+
+Quick summary:
+
+- Last 5 samples: `tail -n 5 .yacb/runtime-monitor-24h.csv`
+- Peak total RSS MB: `awk -F, 'NR>1 && $6>m {m=$6} END {print m}' .yacb/runtime-monitor-24h.csv`
+- Peak total CPU %: `awk -F, 'NR>1 && $5>m {m=$5} END {print m}' .yacb/runtime-monitor-24h.csv`
+- Uptime sample ratio (% of samples with process up): `awk -F, 'NR>1 {t++; u+=$2} END {if(t) print (u/t)*100; else print 0}' .yacb/runtime-monitor-24h.csv`

@@ -501,7 +501,14 @@ def _can_prepare_runtime_dir(path: Path) -> bool:
 
 def _service_child_cmd(resolved_config: str) -> list[str]:
     """Foreground child command used by background service start."""
-    return [sys.executable, "-m", "core.main", "run", resolved_config]
+    python_exe = Path(sys.executable)
+    # On Windows prefer pythonw.exe to avoid spawning an extra console window
+    # for detached/background service start.
+    if sys.platform == "win32":
+        pythonw = python_exe.with_name("pythonw.exe")
+        if pythonw.exists():
+            return [str(pythonw), "-m", "core.main", "run", resolved_config]
+    return [str(python_exe), "-m", "core.main", "run", resolved_config]
 
 
 def _read_pid(pid_path: Path) -> int | None:
@@ -736,8 +743,18 @@ def _run_service_command(args: list[str], default_config: str, project_root: Pat
                 flags = (
                     getattr(subprocess, "DETACHED_PROCESS", 0)
                     | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                    | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+                    | getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 )
-                process = subprocess.Popen(cmd, creationflags=flags, **kwargs)
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+                startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+                process = subprocess.Popen(
+                    cmd,
+                    creationflags=flags,
+                    startupinfo=startupinfo,
+                    **kwargs,
+                )
             else:
                 process = subprocess.Popen(cmd, start_new_session=True, **kwargs)
 

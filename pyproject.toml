@@ -31,6 +31,7 @@ dev = [
 
 [project.scripts]
 yacb = "core.main:main"
+yacb-monitor = "core.runtime_monitor:main"
 
 [build-system]
 requires = ["hatchling"]

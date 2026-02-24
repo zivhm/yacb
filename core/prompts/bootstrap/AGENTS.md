@@ -79,3 +79,4 @@ Default heartbeat prompt:
 - Keep `HEARTBEAT.md` short and current.
 - Periodically distill key daily notes into `memory/MEMORY.md`.
 - When you learn a durable workflow lesson, update this file or a relevant `SKILL.md`.
+- Treat WhatsApp integration as an active improvement area (self-chat/group handling and sender ID/access matching reliability).

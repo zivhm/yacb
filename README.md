@@ -95,6 +95,7 @@ fire, and a skills-first structure that keeps the core runtime straightforward.
 - Scope 1 (Lean Reliability Plan) is completed as of 2026-02-23.
 - Current routing model is deterministic `tier_router` (`light` / `medium` / `heavy`) with `!tier` override.
 - Legacy `!light`, `!heavy`, `!think` are deprecated and replaced by `!tier`.
+- WhatsApp integration is functional but still an active improvement area (self-chat/group behavior and access matching reliability).
 
 ### Project Origin
 

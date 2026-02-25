@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import time
 from datetime import datetime, timedelta
@@ -670,6 +671,76 @@ async def test_cron_start_is_idempotent(tmp_path: Path) -> None:
 
     assert first_count == 1
     assert second_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cron_reload_from_settings_replaces_jobs(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "cron_jobs": {
+                    "jobs": [
+                        {
+                            "id": "job1",
+                            "name": "old",
+                            "enabled": True,
+                            "schedule": {"kind": "every", "every_ms": 60000},
+                            "payload": {"kind": "agent_turn", "message": "old", "deliver": False},
+                            "state": {},
+                            "created_at_ms": 1,
+                            "updated_at_ms": 1,
+                            "delete_after_run": False,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cron = CronService(workspace=tmp_path)
+    await cron.start()
+    try:
+        assert [j.id for j in cron._jobs] == ["job1"]
+
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "cron_jobs": {
+                        "jobs": [
+                            {
+                                "id": "job2",
+                                "name": "new",
+                                "enabled": True,
+                                "schedule": {"kind": "every", "every_ms": 120000},
+                                "payload": {"kind": "agent_turn", "message": "new", "deliver": False},
+                                "state": {},
+                                "created_at_ms": 2,
+                                "updated_at_ms": 2,
+                                "delete_after_run": False,
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cron._reload_jobs_from_settings()
+        assert [j.id for j in cron._jobs] == ["job2"]
+    finally:
+        cron.stop()
+
+
+@pytest.mark.asyncio
+async def test_cron_starts_and_stops_settings_watcher(tmp_path: Path) -> None:
+    cron = CronService(workspace=tmp_path)
+    await cron.start()
+    assert cron._watch_thread is not None
+    assert cron._watch_thread.daemon is True
+    assert cron._watch_thread.is_alive()
+    cron.stop()
+    assert cron._watch_thread is None
 
 
 @pytest.mark.asyncio

@@ -533,7 +533,10 @@ class AgentLoop:
             )
 
         if len(parts) == 2 and parts[1].lower() == "now":
-            return "Restarting yacb now...", True
+            return (
+                "Restarting yacb now...\n"
+                "I will send a wake-up message here once I am back online."
+            ), True
 
         return "Usage: `!restart now`", False
 

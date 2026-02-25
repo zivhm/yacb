@@ -1,6 +1,9 @@
 """Cron service for scheduling agent tasks."""
 
 import asyncio
+import json
+import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -83,14 +86,25 @@ class CronService:
         self.on_job = on_job
         self._jobs: list[CronJob] = []
         self._timer_task: asyncio.Task | None = None
+        self._settings_path = self.workspace / "settings.json"
+        self._last_mtime = self._get_settings_mtime()
+        self._watch_thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
 
-    def _load(self) -> None:
-        from core.config import load_agent_settings
+    def _get_settings_mtime(self) -> float:
+        if self._settings_path.exists():
+            return os.path.getmtime(self._settings_path)
+        return 0.0
+
+    def _load_from_file(self) -> None:
         self._jobs = []
-        settings = load_agent_settings(self.workspace)
-        cron_data = settings.get("cron_jobs", {})
+        if not self._settings_path.exists():
+            return
         try:
+            with open(self._settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            cron_data = settings.get("cron_jobs", {})
             for j in cron_data.get("jobs", []):
                 self._jobs.append(CronJob(
                     id=j["id"], name=j["name"], enabled=j.get("enabled", True),
@@ -103,6 +117,28 @@ class CronService:
                 ))
         except Exception as e:
             logger.warning(f"Failed to load cron jobs: {e}")
+
+    def _reload_jobs_from_settings(self) -> None:
+        self._load_from_file()
+        now = _now_ms()
+        for j in self._jobs:
+            if j.enabled:
+                j.state.next_run_at_ms = _compute_next_run(j.schedule, now)
+        self._save()
+        self._arm_timer()
+        print(f"[CronService] Reloaded jobs from {self._settings_path}")
+
+    def _watch_settings(self) -> None:
+        while self._running:
+            try:
+                mtime = self._get_settings_mtime()
+                if mtime != self._last_mtime:
+                    self._last_mtime = mtime
+                    if self._loop and self._running:
+                        self._loop.call_soon_threadsafe(self._reload_jobs_from_settings)
+            except Exception as e:
+                print(f"[CronService] Watch error: {e}")
+            time.sleep(5)
 
     def _save(self) -> None:
         from core.config import save_agent_settings
@@ -124,19 +160,24 @@ class CronService:
             ]
         }
         save_agent_settings(self.workspace, "cron_jobs", data)
+        self._last_mtime = self._get_settings_mtime()
 
     async def start(self) -> None:
         if self._running:
             logger.debug("Cron service already running; skipping start")
             return
         self._running = True
-        self._load()
+        self._loop = asyncio.get_running_loop()
+        self._load_from_file()
         now = _now_ms()
         for j in self._jobs:
             if j.enabled:
                 j.state.next_run_at_ms = _compute_next_run(j.schedule, now)
         self._save()
         self._arm_timer()
+        if not self._watch_thread or not self._watch_thread.is_alive():
+            self._watch_thread = threading.Thread(target=self._watch_settings, daemon=True)
+            self._watch_thread.start()
         active = [j for j in self._jobs if j.enabled]
         logger.info(f"Cron service started with {len(active)} active job(s)")
         for j in active:
@@ -148,6 +189,10 @@ class CronService:
         if self._timer_task:
             self._timer_task.cancel()
             self._timer_task = None
+        if self._watch_thread and self._watch_thread.is_alive():
+            self._watch_thread.join(timeout=1.0)
+        self._watch_thread = None
+        self._loop = None
 
     def _arm_timer(self) -> None:
         if self._timer_task:

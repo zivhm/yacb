@@ -1,6 +1,7 @@
 """yacb - Entry point. Starts all services."""
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -38,6 +39,7 @@ class Clvd:
         self._thinking_messages: dict[str, tuple[str, str]] = {}
         self._restart_requested = False
         self._update_requested = False
+        self._restart_notice_path = self.config.workspace_path() / ".restart-notice.json"
 
     async def start(self) -> None:
         logger.info("yacb starting...")
@@ -65,6 +67,8 @@ class Clvd:
         for name, channel in self._channels.items():
             logger.info(f"Starting {name} channel...")
             self._tasks.append(asyncio.create_task(self._start_channel(name, channel)))
+
+        self._tasks.append(asyncio.create_task(self._send_pending_restart_notice()))
 
         # Start heartbeat for agents that have it enabled
         for agent_name in self.config.agents:
@@ -254,7 +258,8 @@ class Clvd:
                     await channel.send(msg)
 
                     if msg.metadata.get("restart_requested"):
-                        await self._request_restart()
+                        reason = str(msg.metadata.get("restart_reason", "restart") or "restart")
+                        await self._request_restart(msg.channel, msg.chat_id, reason=reason)
                     if msg.metadata.get("update_requested"):
                         await self._request_update(msg.channel, msg.chat_id)
                 except Exception as e:
@@ -262,10 +267,11 @@ class Clvd:
             except asyncio.CancelledError:
                 break
 
-    async def _request_restart(self) -> None:
+    async def _request_restart(self, channel_name: str, chat_id: str, reason: str = "restart") -> None:
         """Schedule a process restart after sending confirmation to chat."""
         if self._restart_requested:
             return
+        self._persist_restart_notice(channel_name, chat_id, reason=reason)
         self._restart_requested = True
         logger.warning("Restart requested from chat command; scheduling process re-exec")
         self._tasks.append(asyncio.create_task(self._restart_process()))
@@ -347,9 +353,83 @@ class Clvd:
                     "model": "system/control",
                     "tier": "medium",
                     "restart_requested": True,
+                    "restart_reason": "update",
                 },
             )
         )
+
+    def _persist_restart_notice(self, channel_name: str, chat_id: str, reason: str = "restart") -> None:
+        try:
+            self._restart_notice_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "channel": channel_name,
+                "chat_id": chat_id,
+                "reason": reason,
+                "created_at_ms": int(time.time() * 1000),
+            }
+            self._restart_notice_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist restart notice: {e}")
+
+    def _load_restart_notice(self) -> dict[str, Any] | None:
+        if not self._restart_notice_path.exists():
+            return None
+        try:
+            raw = self._restart_notice_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                return None
+            channel = str(data.get("channel", "")).strip()
+            chat_id = str(data.get("chat_id", "")).strip()
+            if not channel or not chat_id:
+                return None
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to load restart notice: {e}")
+            return None
+
+    def _clear_restart_notice(self) -> None:
+        try:
+            self._restart_notice_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to clear restart notice: {e}")
+
+    async def _send_pending_restart_notice(self) -> None:
+        notice = self._load_restart_notice()
+        if not notice:
+            return
+
+        channel_name = str(notice.get("channel", "")).strip()
+        chat_id = str(notice.get("chat_id", "")).strip()
+        reason = str(notice.get("reason", "restart") or "restart")
+
+        content = "I am awake and back online after restart."
+        if reason == "update":
+            content = "I am awake and back online after update + restart."
+
+        for attempt in range(1, 11):
+            channel = self._channels.get(channel_name)
+            if not channel:
+                logger.warning(f"Startup notice: unknown channel '{channel_name}'")
+                return
+            try:
+                await channel.send(
+                    OutboundMessage(
+                        channel=channel_name,
+                        chat_id=chat_id,
+                        content=content,
+                        metadata={"model": "system/control", "tier": "medium"},
+                    )
+                )
+                self._clear_restart_notice()
+                logger.info(f"Startup notice delivered to {channel_name}:{chat_id}")
+                return
+            except Exception as e:
+                logger.warning(f"Startup notice attempt {attempt} failed: {e}")
+                await asyncio.sleep(1.0)
 
     async def _start_heartbeat(self, agent_name: str, agent: "AgentLoop") -> None:
         from core.cron.heartbeat import HeartbeatService
